@@ -142,6 +142,41 @@ This section documents the *[window]* table of the configuration file.
 
 	Default: _false_
 
+*background_image* = { path = _<string>_, opacity = _<float>_, mode = _<string>_ }
+
+	PNG image drawn behind the terminal content. The image is only visible for
+	cells using the default background color, so *colors.primary.background* acts
+	as a mask on top of it.
+
+	The key is unset by default, which disables background image rendering. If
+	the file cannot be read, is not a supported PNG, or is too large for the GPU,
+	a warning is logged and the background image is disabled.
+
+	*path* = _<string>_
+		Absolute path to the PNG file. Required.
+
+	*opacity* = _<float>_
+		Opacity of the image from _0.0_ to _1.0_, multiplied with the image's own
+		alpha channel.
+
+		Default: _1.0_
+
+	*mode* = _"Stretch"_ | _"Fill"_ | _"Fit"_ | _"Center"_
+		How the image is fitted into the window.
+
+		*Stretch*
+			Stretch the image to the window size, ignoring its aspect ratio.
+		*Fill*
+			Scale the image preserving its aspect ratio until it covers the
+			window, cropping the overflow.
+		*Fit*
+			Scale the image preserving its aspect ratio until it fits inside
+			the window.
+		*Center*
+			Draw the image unscaled, centered inside the window.
+
+		Default: _"Stretch"_
+
 *startup_mode* = _"Windowed"_ | _"Maximized"_ | _"Fullscreen"_ | _"SimpleFullscreen"_
 
 	Startup mode (changes require restart)

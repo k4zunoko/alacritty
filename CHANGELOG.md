@@ -8,6 +8,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Notable changes to the `alacritty_terminal` crate are documented in its
 [CHANGELOG](./alacritty_terminal/CHANGELOG.md).
 
+## Unreleased (fork)
+
+This section documents changes made in this local fork of Alacritty, which are
+not part of any upstream release.
+
+### Added
+
+- `window.background_image` for drawing a PNG file behind the terminal content,
+  with `path`, `opacity` and `mode` (`Stretch`, `Fill`, `Fit`, `Center`)
+
+### Changed
+
+- The `png` dependency is no longer optional and is built on all platforms
+
 ## 0.17.0
 
 ### Packaging
