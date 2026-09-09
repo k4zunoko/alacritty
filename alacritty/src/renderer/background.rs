@@ -4,6 +4,7 @@
 //! cleared and before any cell is rendered. Cells using the default background color are
 //! rendered with an alpha of `0`, which makes the image visible behind the terminal content.
 
+use std::ffi::CStr;
 use std::fs::File;
 use std::io::BufReader;
 use std::mem;
@@ -175,6 +176,11 @@ impl BackgroundRenderer {
 
         let program = BackgroundShaderProgram::new(shader_version)?;
 
+        // The GLES2 shaders cannot use `layout(location = ...)`, so the linker is free to assign
+        // the attribute locations. Query them instead of assuming the declaration order.
+        let position_location = program.attribute_location(c"aPos")?;
+        let tex_coords_location = program.attribute_location(c"aTexCoords")?;
+
         let mut vao: GLuint = 0;
         let mut vbo: GLuint = 0;
         let mut texture: GLuint = 0;
@@ -190,26 +196,26 @@ impl BackgroundRenderer {
 
             // Position.
             gl::VertexAttribPointer(
-                0,
+                position_location,
                 2,
                 gl::FLOAT,
                 gl::FALSE,
                 mem::size_of::<Vertex>() as i32,
                 attribute_offset as *const _,
             );
-            gl::EnableVertexAttribArray(0);
+            gl::EnableVertexAttribArray(position_location);
             attribute_offset += mem::size_of::<f32>() * 2;
 
             // Texture coordinates.
             gl::VertexAttribPointer(
-                1,
+                tex_coords_location,
                 2,
                 gl::FLOAT,
                 gl::FALSE,
                 mem::size_of::<Vertex>() as i32,
                 attribute_offset as *const _,
             );
-            gl::EnableVertexAttribArray(1);
+            gl::EnableVertexAttribArray(tex_coords_location);
 
             // Reset buffer bindings.
             gl::BindVertexArray(0);
@@ -389,6 +395,21 @@ impl BackgroundShaderProgram {
 
     fn id(&self) -> GLuint {
         self.program.id()
+    }
+
+    /// Get the location of a vertex attribute.
+    ///
+    /// GLSL3 shaders pin the locations with `layout(location = ...)`, but the GLES2 shaders cannot,
+    /// so the linker assigns them and they must be queried.
+    fn attribute_location(&self, name: &'static CStr) -> Result<GLuint, renderer::Error> {
+        let location = unsafe { gl::GetAttribLocation(self.id(), name.as_ptr()) };
+        if location < 0 {
+            return Err(renderer::Error::Other(format!(
+                "background shader is missing the {name:?} attribute"
+            )));
+        }
+
+        Ok(location as GLuint)
     }
 
     fn update_uniforms(&self, opacity: f32) {

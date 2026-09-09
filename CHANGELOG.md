@@ -22,6 +22,11 @@ not part of any upstream release.
 
 - The `png` dependency is no longer optional and is built on all platforms
 
+### Fixed
+
+- Background image drawn in the wrong place with the GLES2 renderer, since the
+  vertex attribute locations are assigned by the linker there
+
 ## 0.17.0
 
 ### Packaging
