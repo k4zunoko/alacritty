@@ -33,7 +33,7 @@ use crate::config::mouse::Mouse;
 use crate::config::scrolling::Scrolling;
 use crate::config::selection::Selection;
 use crate::config::terminal::Terminal;
-use crate::config::window::WindowConfig;
+use crate::config::window::{BackgroundImage, WindowConfig};
 
 /// Regex used for the default URL hint.
 #[rustfmt::skip]
@@ -145,6 +145,12 @@ impl UiConfig {
     #[inline]
     pub fn window_opacity(&self) -> f32 {
         self.window.opacity.as_f32()
+    }
+
+    /// Background image of the window, if any is configured.
+    #[inline]
+    pub fn background_image(&self) -> Option<&BackgroundImage> {
+        self.window.background_image.as_ref()
     }
 
     #[inline]

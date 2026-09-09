@@ -1,4 +1,5 @@
 use std::fmt::{self, Formatter};
+use std::path::PathBuf;
 
 use log::{error, warn};
 use serde::de::{self, MapAccess, Visitor};
@@ -45,6 +46,9 @@ pub struct WindowConfig {
     /// Background opacity from 0.0 to 1.0.
     pub opacity: Percentage,
 
+    /// Background image drawn behind the terminal content.
+    pub background_image: Option<BackgroundImage>,
+
     /// Request blur behind the window.
     pub blur: bool,
 
@@ -84,6 +88,7 @@ impl Default for WindowConfig {
             resize_increments: Default::default(),
             decorations_theme_variant: Default::default(),
             option_as_alt: Default::default(),
+            background_image: Default::default(),
             level: Default::default(),
         }
     }
@@ -322,5 +327,99 @@ impl From<WindowLevel> for WinitWindowLevel {
             WindowLevel::Normal => WinitWindowLevel::Normal,
             WindowLevel::AlwaysOnTop => WinitWindowLevel::AlwaysOnTop,
         }
+    }
+}
+
+/// Background image drawn behind the terminal content.
+#[derive(ConfigDeserialize, Serialize, Default, Debug, Clone, PartialEq)]
+pub struct BackgroundImage {
+    /// Path to the PNG file which should be used as the window background.
+    pub path: PathBuf,
+
+    /// Opacity of the background image from 0.0 to 1.0.
+    pub opacity: Percentage,
+
+    /// Scaling mode used to fit the image into the window.
+    pub mode: BackgroundImageMode,
+}
+
+/// Scaling mode for the window background image.
+#[derive(ConfigDeserialize, Serialize, Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackgroundImageMode {
+    /// Stretch the image to the window size, ignoring its aspect ratio.
+    #[default]
+    Stretch,
+
+    /// Scale the image preserving its aspect ratio until it covers the window, cropping the
+    /// overflow.
+    Fill,
+
+    /// Scale the image preserving its aspect ratio until it fits the window, leaving the
+    /// remaining area untouched.
+    Fit,
+
+    /// Draw the image without scaling, centered inside the window.
+    Center,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::config::UiConfig;
+
+    #[test]
+    fn background_image_is_optional() {
+        let config: UiConfig = toml::from_str("[window]\nopacity = 0.5\n").unwrap();
+        assert_eq!(config.window.background_image, None);
+        assert_eq!(config.window.opacity.as_f32(), 0.5);
+    }
+
+    #[test]
+    fn background_image_defaults() {
+        let config: UiConfig =
+            toml::from_str("[window.background_image]\npath = \"/tmp/bg.png\"\n").unwrap();
+
+        let image = config.window.background_image.unwrap();
+        assert_eq!(image.path, PathBuf::from("/tmp/bg.png"));
+        assert_eq!(image.opacity.as_f32(), 1.0);
+        assert_eq!(image.mode, BackgroundImageMode::Stretch);
+    }
+
+    #[test]
+    fn background_image_full() {
+        let config: UiConfig = toml::from_str(
+            "[window.background_image]\npath = \"/tmp/bg.png\"\nopacity = 0.25\nmode = \"Fill\"\n",
+        )
+        .unwrap();
+
+        let image = config.window.background_image.unwrap();
+        assert_eq!(image.path, PathBuf::from("/tmp/bg.png"));
+        assert_eq!(image.opacity.as_f32(), 0.25);
+        assert_eq!(image.mode, BackgroundImageMode::Fill);
+    }
+
+    #[test]
+    fn background_image_mode_is_case_insensitive() {
+        for (input, expected) in [
+            ("stretch", BackgroundImageMode::Stretch),
+            ("FILL", BackgroundImageMode::Fill),
+            ("Fit", BackgroundImageMode::Fit),
+            ("center", BackgroundImageMode::Center),
+        ] {
+            let toml =
+                format!("[window.background_image]\npath = \"/tmp/bg.png\"\nmode = \"{input}\"\n");
+            let config: UiConfig = toml::from_str(&toml).unwrap();
+            assert_eq!(config.window.background_image.unwrap().mode, expected);
+        }
+    }
+
+    #[test]
+    fn background_image_opacity_is_clamped() {
+        let config: UiConfig =
+            toml::from_str("[window.background_image]\npath = \"/tmp/bg.png\"\nopacity = 3.0\n")
+                .unwrap();
+
+        assert_eq!(config.window.background_image.unwrap().opacity.as_f32(), 1.0);
     }
 }
