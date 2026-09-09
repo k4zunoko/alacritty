@@ -39,9 +39,9 @@ use alacritty_terminal::vte::ansi::{CursorShape, NamedColor};
 use crate::config::UiConfig;
 use crate::config::debug::RendererPreference;
 use crate::config::font::Font;
-use crate::config::window::Dimensions;
 #[cfg(not(windows))]
 use crate::config::window::StartupMode;
+use crate::config::window::{BackgroundImage, Dimensions};
 use crate::display::bell::VisualBell;
 use crate::display::color::{List, Rgb};
 use crate::display::content::{RenderableContent, RenderableCursor};
@@ -52,6 +52,7 @@ use crate::display::meter::Meter;
 use crate::display::window::Window;
 use crate::event::{Event, EventType, Mouse, SearchState};
 use crate::message_bar::{MessageBuffer, MessageType};
+use crate::renderer::background::BackgroundTexture;
 use crate::renderer::rects::{RenderLine, RenderLines, RenderRect};
 use crate::renderer::{self, GlyphCache, Renderer, platform};
 use crate::scheduler::{Scheduler, TimerId, Topic};
@@ -388,6 +389,11 @@ pub struct Display {
     // Mouse point position when highlighting hints.
     hint_mouse_point: Option<Point>,
 
+    /// Decoded background image and the configuration it was loaded with.
+    ///
+    /// The decoded pixels are kept around to re-upload the texture after a GPU reset.
+    background_image: Option<(BackgroundImage, BackgroundTexture)>,
+
     renderer: ManuallyDrop<Renderer>,
     renderer_preference: Option<RendererPreference>,
 
@@ -465,9 +471,21 @@ impl Display {
         // Update OpenGL projection.
         renderer.resize(&size_info);
 
+        // Load the configured background image and upload it to the GPU.
+        let background_image = config.background_image().and_then(|image| {
+            BackgroundTexture::load(image).map(|texture| (image.clone(), texture))
+        });
+        renderer.set_background_image(
+            background_image.as_ref().map(|(config, texture)| (texture, config)),
+            &size_info,
+        );
+
         // Clear screen.
         let background_color = config.colors.primary.background;
         renderer.clear(background_color, config.window_opacity());
+
+        // Draw the background image on top of the cleared screen.
+        renderer.draw_background(&size_info);
 
         // Disable shadows for transparent windows on macOS.
         #[cfg(target_os = "macos")]
@@ -539,6 +557,7 @@ impl Display {
             cursor_hidden: Default::default(),
             meter: Default::default(),
             ime: Default::default(),
+            background_image,
         })
     }
 
@@ -597,6 +616,11 @@ impl Display {
 
         // Resize the renderer.
         self.renderer.resize(&self.size_info);
+
+        // Re-upload the background image texture, which was lost with the old context.
+        let background_image =
+            self.background_image.as_ref().map(|(config, texture)| (texture, config));
+        self.renderer.set_background_image(background_image, &self.size_info);
 
         self.reset_glyph_cache();
         self.damage_tracker.frame().mark_fully_damaged();
@@ -836,6 +860,7 @@ impl Display {
         self.make_current();
 
         self.renderer.clear(background_color, config.window_opacity());
+        self.renderer.draw_background(&size_info);
         let mut lines = RenderLines::new();
 
         // Optimize loop hint comparator.
@@ -1051,6 +1076,44 @@ impl Display {
         self.damage_tracker.debug = config.debug.highlight_damage;
         self.visual_bell.update_config(&config.bell);
         self.colors = List::from(&config.colors);
+        self.update_background_image(config);
+    }
+
+    /// Reload the background image when its configuration changed.
+    fn update_background_image(&mut self, config: &UiConfig) {
+        let new_config = config.background_image().cloned();
+        let old_config = self.background_image.as_ref().map(|(config, _)| config);
+
+        // Skip all work when nothing changed.
+        if new_config.as_ref() == old_config {
+            return;
+        }
+
+        // Only decode the file again when the path itself changed.
+        let reuse_texture = match (&new_config, &self.background_image) {
+            (Some(new_config), Some((old_config, _))) => new_config.path == old_config.path,
+            _ => false,
+        };
+
+        self.background_image = match new_config {
+            Some(new_config) if reuse_texture => {
+                let (_, texture) = self.background_image.take().unwrap();
+                Some((new_config, texture))
+            },
+            Some(new_config) => {
+                BackgroundTexture::load(&new_config).map(|texture| (new_config, texture))
+            },
+            None => None,
+        };
+
+        // Ensure we're modifying the correct OpenGL context.
+        self.make_current();
+
+        let background_image =
+            self.background_image.as_ref().map(|(config, texture)| (texture, config));
+        self.renderer.set_background_image(background_image, &self.size_info);
+
+        self.damage_tracker.frame().mark_fully_damaged();
     }
 
     /// Update the mouse/vi mode cursor hint highlighting.

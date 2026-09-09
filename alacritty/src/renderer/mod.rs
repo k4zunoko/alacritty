@@ -9,20 +9,23 @@ use ahash::RandomState;
 use crossfont::Metrics;
 use glutin::context::{ContextApi, GlContext, PossiblyCurrentContext};
 use glutin::display::{GetGlDisplay, GlDisplay};
-use log::{LevelFilter, debug, info};
+use log::{LevelFilter, debug, info, warn};
 use unicode_width::UnicodeWidthChar;
 
 use alacritty_terminal::index::Point;
 use alacritty_terminal::term::cell::Flags;
 
 use crate::config::debug::RendererPreference;
+use crate::config::window::BackgroundImage;
 use crate::display::SizeInfo;
 use crate::display::color::Rgb;
 use crate::display::content::RenderableCell;
 use crate::gl;
+use crate::renderer::background::{BackgroundRenderer, BackgroundTexture};
 use crate::renderer::rects::{RectRenderer, RenderRect};
 use crate::renderer::shader::ShaderError;
 
+pub mod background;
 pub mod platform;
 pub mod rects;
 mod shader;
@@ -89,6 +92,8 @@ enum TextRendererProvider {
 pub struct Renderer {
     text_renderer: TextRendererProvider,
     rect_renderer: RectRenderer,
+    background_renderer: Option<BackgroundRenderer>,
+    shader_version: ShaderVersion,
     robustness: bool,
 }
 
@@ -161,6 +166,8 @@ impl Renderer {
             (text_renderer, rect_renderer)
         };
 
+        let shader_version = if use_glsl3 { ShaderVersion::Glsl3 } else { ShaderVersion::Gles2 };
+
         // Enable debug logging for OpenGL as well.
         if log::max_level() >= LevelFilter::Debug && GlExtensions::contains("GL_KHR_debug") {
             debug!("Enabled debug logging for OpenGL");
@@ -171,7 +178,13 @@ impl Renderer {
             }
         }
 
-        Ok(Self { text_renderer, rect_renderer, robustness })
+        Ok(Self {
+            text_renderer,
+            rect_renderer,
+            background_renderer: None,
+            shader_version,
+            robustness,
+        })
     }
 
     pub fn draw_cells<I: Iterator<Item = RenderableCell>>(
@@ -340,12 +353,67 @@ impl Renderer {
     }
 
     /// Resize the renderer.
-    pub fn resize(&self, size_info: &SizeInfo) {
+    pub fn resize(&mut self, size_info: &SizeInfo) {
         self.set_viewport(size_info);
+        if let Some(background_renderer) = &mut self.background_renderer {
+            background_renderer.resize(size_info);
+        }
         match &self.text_renderer {
             TextRendererProvider::Gles2(renderer) => renderer.resize(size_info),
             TextRendererProvider::Glsl3(renderer) => renderer.resize(size_info),
         }
+    }
+
+    /// Set or replace the background image.
+    ///
+    /// Passing [`None`] releases all resources associated with the background image. Any error
+    /// while setting up the renderer disables the background image instead of propagating.
+    pub fn set_background_image(
+        &mut self,
+        image: Option<(&BackgroundTexture, &BackgroundImage)>,
+        size_info: &SizeInfo,
+    ) {
+        // Always drop the old renderer first, so its GL resources are released.
+        self.background_renderer = None;
+
+        let (texture, config) = match image {
+            Some(image) => image,
+            None => return,
+        };
+
+        match BackgroundRenderer::new(self.shader_version, texture, config, size_info) {
+            Ok(background_renderer) => self.background_renderer = Some(background_renderer),
+            Err(err) => warn!("Disabling background image: {err}"),
+        }
+    }
+
+    /// Draw the background image, if one is configured.
+    ///
+    /// This must be called right after [`Self::clear`] and before any cell is drawn.
+    pub fn draw_background(&mut self, size_info: &SizeInfo) {
+        if self.background_renderer.is_none() {
+            return;
+        }
+
+        // Prepare background rendering state.
+        unsafe {
+            // Remove padding from viewport.
+            gl::Viewport(0, 0, size_info.width() as i32, size_info.height() as i32);
+            gl::BlendFuncSeparate(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA, gl::SRC_ALPHA, gl::ONE);
+        }
+
+        if let Some(background_renderer) = &self.background_renderer {
+            background_renderer.draw();
+        }
+
+        // Activate regular state again.
+        unsafe {
+            // Reset blending strategy.
+            gl::BlendFunc(gl::SRC1_COLOR, gl::ONE_MINUS_SRC1_COLOR);
+        }
+
+        // Restore viewport with padding.
+        self.set_viewport(size_info);
     }
 }
 
