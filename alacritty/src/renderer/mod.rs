@@ -382,8 +382,22 @@ impl Renderer {
         };
 
         match BackgroundRenderer::new(self.shader_version, texture, config, size_info) {
-            Ok(background_renderer) => self.background_renderer = Some(background_renderer),
+            Ok(background_renderer) => {
+                self.background_renderer = Some(background_renderer);
+
+                // Uploading the texture changed the binding of texture unit 0, which the text
+                // renderer caches across frames.
+                self.invalidate_text_texture_cache();
+            },
             Err(err) => warn!("Disabling background image: {err}"),
+        }
+    }
+
+    /// Drop the text renderer's cached binding for texture unit 0.
+    fn invalidate_text_texture_cache(&mut self) {
+        match &mut self.text_renderer {
+            TextRendererProvider::Gles2(renderer) => renderer.invalidate_texture_cache(),
+            TextRendererProvider::Glsl3(renderer) => renderer.invalidate_texture_cache(),
         }
     }
 
@@ -405,6 +419,10 @@ impl Renderer {
         if let Some(background_renderer) = &self.background_renderer {
             background_renderer.draw();
         }
+
+        // The background image was bound to texture unit 0, so the text renderer must not assume
+        // its atlas is still bound there.
+        self.invalidate_text_texture_cache();
 
         // Activate regular state again.
         unsafe {

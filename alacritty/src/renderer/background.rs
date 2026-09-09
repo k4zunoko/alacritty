@@ -24,6 +24,13 @@ use crate::renderer::shader::{ShaderProgram, ShaderVersion};
 static BACKGROUND_SHADER_V: &str = include_str!("../../res/background.v.glsl");
 static BACKGROUND_SHADER_F: &str = include_str!("../../res/background.f.glsl");
 
+/// Maximum number of bytes a decoded background image may occupy.
+///
+/// The PNG header alone can claim dimensions far beyond the available memory, so the size is
+/// checked before any pixel buffer is allocated. Otherwise a few kilobyte "decompression bomb"
+/// would abort the process inside the allocator instead of just disabling the image.
+const MAX_IMAGE_BYTES: usize = 256 * 1024 * 1024;
+
 /// Decoded background image, kept on the CPU side so it can be re-uploaded after a GPU reset.
 #[derive(Debug)]
 pub struct BackgroundTexture {
@@ -66,7 +73,22 @@ impl BackgroundTexture {
         decoder.set_transformations(Transformations::normalize_to_color8());
 
         let mut reader = decoder.read_info().map_err(|err| err.to_string())?;
-        let mut buffer = vec![0; reader.output_buffer_size()];
+
+        // Reject oversized images before allocating anything for them.
+        let (header_width, header_height) = reader.info().size();
+        let output_buffer_size = reader.output_buffer_size();
+        let rgba_size = (header_width as usize)
+            .checked_mul(header_height as usize)
+            .and_then(|pixels| pixels.checked_mul(4))
+            .ok_or_else(|| String::from("image dimensions overflow"))?;
+        if output_buffer_size > MAX_IMAGE_BYTES || rgba_size > MAX_IMAGE_BYTES {
+            return Err(format!(
+                "image is {header_width}x{header_height}, which needs more than the maximum of \
+                 {MAX_IMAGE_BYTES} bytes"
+            ));
+        }
+
+        let mut buffer = vec![0; output_buffer_size];
         let info = reader.next_frame(&mut buffer).map_err(|err| err.to_string())?;
 
         let (width, height) = (info.width, info.height);

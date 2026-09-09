@@ -152,6 +152,11 @@ This section documents the *[window]* table of the configuration file.
 	the file cannot be read, is not a supported PNG, or is too large for the GPU,
 	a warning is logged and the background image is disabled.
 
+	The image is drawn on top of the cleared window, so it also replaces the
+	alpha channel of the area it covers: wherever the image is drawn, *opacity*
+	has no effect and the window is not transparent anymore. This applies to
+	partially transparent images as well.
+
 	*path* = _<string>_
 		Absolute path to the PNG file. Required.
 

@@ -26,6 +26,9 @@ not part of any upstream release.
 
 - Background image drawn in the wrong place with the GLES2 renderer, since the
   vertex attribute locations are assigned by the linker there
+- Glyphs rendered with a stale texture binding after the background image was
+  drawn or (re)uploaded
+- Abort instead of a warning for PNG files declaring huge dimensions
 
 ## 0.17.0
 

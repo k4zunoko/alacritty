@@ -74,6 +74,13 @@ pub trait TextRenderer<'a> {
 
     fn program(&self) -> &Self::Shader;
 
+    /// Forget the texture cached for texture unit 0.
+    ///
+    /// The text renderers keep track of the texture bound to unit 0 across frames to skip
+    /// redundant `glBindTexture` calls, so everything else binding to that unit must invalidate
+    /// this cache.
+    fn invalidate_texture_cache(&mut self);
+
     /// Resize the text rendering.
     fn resize(&self, size: &SizeInfo) {
         unsafe {
