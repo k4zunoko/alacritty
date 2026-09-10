@@ -19,3 +19,13 @@ incremental = false
 [workspace.dependencies]
 toml = "0.9.11"
 toml_edit = "0.24.0"
+
+# Backport of the upstream winit fix for the Windows 11 mixed-DPI resize feedback
+# loop (winit#4041, winit#4600, alacritty#4523). winit's Win32 `WM_DPICHANGED`
+# handler discards the suggested rectangle Windows passes in `lParam` and instead
+# nudges the window back onto the source monitor, retriggering `WM_DPICHANGED`
+# forever. Upstream fixed this in 488c036a, but only shipped it in 0.31.0-beta.x;
+# it was never backported to the 0.30.x line. This rev is v0.30.13 plus that one
+# cherry-picked commit. Drop this patch once Alacritty migrates to winit 0.31+.
+[patch.crates-io]
+winit = { git = "https://github.com/k4zunoko/winit", rev = "4a1d1ae84a73d0798adf94a7ce49237c1dbc7a66" }
