@@ -665,6 +665,26 @@ Windows: _"powershell"_
 
 	Default: _"OnlyCopy"_
 
+*persistent_mouse_mode* = _true_ | _false_
+
+	When this is _true_, applications on the alternate screen cannot turn mouse
+	reporting off again once they have turned it on. Reporting is dropped when
+	the application leaves the alternate screen.
+
+	This is a workaround for hosts which lose the application's request to
+	re-enable mouse reporting. Windows' ConPTY only forwards mouse mode changes
+	to the outer terminal when the console's _ENABLE_MOUSE_INPUT_ flag changes,
+	so an application which disables and re-enables reporting with escape
+	sequences alone can leave the terminal with reporting off while ConPTY still
+	believes it is on, which makes the mouse stop working for good.
+
+	Note that with this enabled, applications which deliberately release the
+	mouse while staying on the alternate screen, for example to let the terminal
+	select text, no longer can. Holding _Shift_ still suppresses mouse
+	reporting.
+
+	Default: _false_
+
 # MOUSE
 
 This section documents the *[mouse]* table of the configuration file.

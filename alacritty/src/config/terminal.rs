@@ -10,6 +10,9 @@ use crate::config::ui_config::{Program, StringVisitor};
 pub struct Terminal {
     /// OSC52 support mode.
     pub osc52: SerdeOsc52,
+    /// Keep mouse reporting enabled on the alternate screen, even when the
+    /// application asks to disable it.
+    pub persistent_mouse_mode: bool,
     /// Path to a shell program to run on startup.
     pub shell: Option<Program>,
 }

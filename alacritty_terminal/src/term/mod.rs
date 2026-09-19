@@ -349,6 +349,13 @@ pub struct Config {
     /// Whether to enable kitty keyboard protocol.
     pub kitty_keyboard: bool,
 
+    /// Whether to keep mouse reporting enabled while the alternate screen is
+    /// active, even when the application asks to disable it.
+    ///
+    /// This works around hosts which drop the application's request to turn
+    /// mouse reporting back on. See [`Term::persist_mouse_mode`].
+    pub persistent_mouse_mode: bool,
+
     /// OSC52 support mode.
     pub osc52: Osc52,
 }
@@ -361,6 +368,7 @@ impl Default for Config {
             default_cursor_style: Default::default(),
             vi_mode_cursor_style: Default::default(),
             kitty_keyboard: Default::default(),
+            persistent_mouse_mode: Default::default(),
             osc52: Default::default(),
         }
     }
@@ -708,6 +716,26 @@ impl<T> Term<T> {
     #[inline]
     pub fn mode(&self) -> &TermMode {
         &self.mode
+    }
+
+    /// Whether mouse reporting should survive the application's attempts to
+    /// disable it.
+    ///
+    /// Some hosts, most notably Windows' ConPTY, only forward a mouse mode
+    /// change to the outer terminal when the console's `ENABLE_MOUSE_INPUT`
+    /// flag changes. An application which disables and re-enables mouse
+    /// reporting through escape sequences alone can therefore end up with the
+    /// terminal reporting disabled while the host still believes it is
+    /// enabled, leaving the mouse permanently dead.
+    ///
+    /// When `terminal.persistent_mouse_mode` is set, requests to disable mouse
+    /// reporting are ignored while the alternate screen is active, which is
+    /// where full-screen applications live. Leaving the alternate screen always
+    /// restores the regular behavior, so a shell never inherits mouse reporting
+    /// from an application which exited without cleaning up.
+    #[inline]
+    fn persist_mouse_mode(&self) -> bool {
+        self.config.persistent_mouse_mode && self.mode.contains(TermMode::ALT_SCREEN)
     }
 
     /// Swap primary and alternate screen buffer.
@@ -2008,27 +2036,49 @@ impl<T: EventListener> Handler for Term<T> {
             NamedPrivateMode::UrgencyHints => self.mode.remove(TermMode::URGENCY_HINTS),
             NamedPrivateMode::SwapScreenAndSetRestoreCursor => {
                 if self.mode.contains(TermMode::ALT_SCREEN) {
+                    // Drop any mouse reporting kept alive by
+                    // `persistent_mouse_mode`, so whatever runs on the primary
+                    // screen next starts without it.
+                    if self.config.persistent_mouse_mode {
+                        self.mode.remove(TermMode::MOUSE_MODE);
+                        self.event_proxy.send_event(Event::MouseCursorDirty);
+                    }
+
                     self.swap_alt();
                 }
             },
             NamedPrivateMode::ShowCursor => self.mode.remove(TermMode::SHOW_CURSOR),
             NamedPrivateMode::CursorKeys => self.mode.remove(TermMode::APP_CURSOR),
             NamedPrivateMode::ReportMouseClicks => {
-                self.mode.remove(TermMode::MOUSE_REPORT_CLICK);
-                self.event_proxy.send_event(Event::MouseCursorDirty);
+                if !self.persist_mouse_mode() {
+                    self.mode.remove(TermMode::MOUSE_REPORT_CLICK);
+                    self.event_proxy.send_event(Event::MouseCursorDirty);
+                }
             },
             NamedPrivateMode::ReportCellMouseMotion => {
-                self.mode.remove(TermMode::MOUSE_DRAG);
-                self.event_proxy.send_event(Event::MouseCursorDirty);
+                if !self.persist_mouse_mode() {
+                    self.mode.remove(TermMode::MOUSE_DRAG);
+                    self.event_proxy.send_event(Event::MouseCursorDirty);
+                }
             },
             NamedPrivateMode::ReportAllMouseMotion => {
-                self.mode.remove(TermMode::MOUSE_MOTION);
-                self.event_proxy.send_event(Event::MouseCursorDirty);
+                if !self.persist_mouse_mode() {
+                    self.mode.remove(TermMode::MOUSE_MOTION);
+                    self.event_proxy.send_event(Event::MouseCursorDirty);
+                }
             },
             NamedPrivateMode::ReportFocusInOut => self.mode.remove(TermMode::FOCUS_IN_OUT),
             NamedPrivateMode::BracketedPaste => self.mode.remove(TermMode::BRACKETED_PASTE),
-            NamedPrivateMode::SgrMouse => self.mode.remove(TermMode::SGR_MOUSE),
-            NamedPrivateMode::Utf8Mouse => self.mode.remove(TermMode::UTF8_MOUSE),
+            NamedPrivateMode::SgrMouse => {
+                if !self.persist_mouse_mode() {
+                    self.mode.remove(TermMode::SGR_MOUSE);
+                }
+            },
+            NamedPrivateMode::Utf8Mouse => {
+                if !self.persist_mouse_mode() {
+                    self.mode.remove(TermMode::UTF8_MOUSE);
+                }
+            },
             NamedPrivateMode::AlternateScroll => self.mode.remove(TermMode::ALTERNATE_SCROLL),
             NamedPrivateMode::LineWrap => self.mode.remove(TermMode::LINE_WRAP),
             NamedPrivateMode::Origin => self.mode.remove(TermMode::ORIGIN),
@@ -3298,5 +3348,49 @@ mod tests {
         assert_eq!(version_number("0.1.2-dev"), 1_02);
         assert_eq!(version_number("1.2.3-dev"), 1_02_03);
         assert_eq!(version_number("999.99.99"), 9_99_99_99);
+    }
+
+    #[test]
+    fn mouse_mode_is_released_without_persistent_mouse_mode() {
+        let size = TermSize::new(5, 10);
+        let mut term = Term::new(Config::default(), &size, VoidListener);
+
+        term.set_private_mode(NamedPrivateMode::SwapScreenAndSetRestoreCursor.into());
+        term.set_private_mode(NamedPrivateMode::ReportAllMouseMotion.into());
+        term.set_private_mode(NamedPrivateMode::SgrMouse.into());
+        assert!(term.mode().contains(TermMode::MOUSE_MOTION));
+
+        term.unset_private_mode(NamedPrivateMode::ReportAllMouseMotion.into());
+        term.unset_private_mode(NamedPrivateMode::SgrMouse.into());
+        assert!(!term.mode().intersects(TermMode::MOUSE_MODE));
+        assert!(!term.mode().contains(TermMode::SGR_MOUSE));
+    }
+
+    #[test]
+    fn persistent_mouse_mode_survives_until_the_alt_screen_is_left() {
+        let size = TermSize::new(5, 10);
+        let config = Config { persistent_mouse_mode: true, ..Config::default() };
+        let mut term = Term::new(config, &size, VoidListener);
+
+        // Mouse reporting is still released on the primary screen.
+        term.set_private_mode(NamedPrivateMode::ReportAllMouseMotion.into());
+        term.unset_private_mode(NamedPrivateMode::ReportAllMouseMotion.into());
+        assert!(!term.mode().intersects(TermMode::MOUSE_MODE));
+
+        // On the alternate screen the application cannot drop it anymore.
+        term.set_private_mode(NamedPrivateMode::SwapScreenAndSetRestoreCursor.into());
+        term.set_private_mode(NamedPrivateMode::ReportAllMouseMotion.into());
+        term.set_private_mode(NamedPrivateMode::SgrMouse.into());
+        term.unset_private_mode(NamedPrivateMode::ReportAllMouseMotion.into());
+        term.unset_private_mode(NamedPrivateMode::ReportCellMouseMotion.into());
+        term.unset_private_mode(NamedPrivateMode::ReportMouseClicks.into());
+        term.unset_private_mode(NamedPrivateMode::SgrMouse.into());
+        assert!(term.mode().contains(TermMode::MOUSE_MOTION));
+        assert!(term.mode().contains(TermMode::SGR_MOUSE));
+
+        // Leaving the alternate screen releases the mouse again.
+        term.unset_private_mode(NamedPrivateMode::SwapScreenAndSetRestoreCursor.into());
+        assert!(!term.mode().contains(TermMode::ALT_SCREEN));
+        assert!(!term.mode().intersects(TermMode::MOUSE_MODE));
     }
 }
