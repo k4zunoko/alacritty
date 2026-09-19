@@ -123,6 +123,7 @@ impl UiConfig {
             vi_mode_cursor_style: self.cursor.vi_mode_style(),
             default_cursor_style: self.cursor.style(),
             osc52: self.terminal.osc52.0,
+            persistent_mouse_mode: self.terminal.persistent_mouse_mode,
             kitty_keyboard: true,
         }
     }

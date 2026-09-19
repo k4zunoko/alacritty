@@ -17,6 +17,9 @@ not part of any upstream release.
 
 - `window.background_image` for drawing a PNG file behind the terminal content,
   with `path`, `opacity` and `mode` (`Stretch`, `Fill`, `Fit`, `Center`)
+- `terminal.persistent_mouse_mode` for keeping mouse reporting alive on the
+  alternate screen, working around ConPTY hosts which swallow an application's
+  request to re-enable it
 
 ### Changed
 
