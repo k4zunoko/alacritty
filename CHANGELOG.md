@@ -24,6 +24,9 @@ not part of any upstream release.
 ### Changed
 
 - The `png` dependency is no longer optional and is built on all platforms
+- `window.background_image.path` is resolved like `general.import`, relative to
+  the main configuration file's directory instead of the working directory,
+  with `~/` expanded to the home directory
 
 ### Fixed
 

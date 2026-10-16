@@ -158,7 +158,11 @@ This section documents the *[window]* table of the configuration file.
 	partially transparent images as well.
 
 	*path* = _<string>_
-		Absolute path to the PNG file. Required.
+		Path to the PNG file. Required.
+
+		Like *import*, paths starting with _~/_ are relative to the user's home
+		directory, and other relative paths are relative to the directory of the
+		main configuration file, even when they are set in an imported file.
 
 	*opacity* = _<float>_
 		Opacity of the image from _0.0_ to _1.0_, multiplied with the image's own

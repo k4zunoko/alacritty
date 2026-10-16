@@ -188,6 +188,12 @@ fn read_config(path: &Path) -> Result<UiConfig> {
     let mut config = UiConfig::deserialize(config_value)?;
     config.config_paths = config_paths;
 
+    // Imports are merged before deserialization, so the file which set the background image is no
+    // longer known and its path is always resolved relative to the main configuration file.
+    if let Some(background_image) = &mut config.window.background_image {
+        background_image.resolve_path(path);
+    }
+
     Ok(config)
 }
 
@@ -449,5 +455,27 @@ window = "Hello""#
         "#;
         let toml = yaml_to_toml(contents);
         assert!(toml.is_empty());
+    }
+
+    #[test]
+    fn background_image_resolved_from_main_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("alacritty.toml");
+        fs::write(&config_path, "[general]\nimport = [\"themes/background.toml\"]\n").unwrap();
+        fs::create_dir(dir.path().join("themes")).unwrap();
+        fs::write(
+            dir.path().join("themes").join("background.toml"),
+            "[window.background_image]\npath = \"bg.png\"\n",
+        )
+        .unwrap();
+        let expected = dir.path().join("bg.png");
+
+        // Paths from imports are relative to the main configuration file, not the import.
+        let config = read_config(&config_path).unwrap();
+        assert_eq!(config.window.background_image.unwrap().path, expected);
+
+        // Live config reload resolves the path the same way.
+        let config = reload(&config_path, &mut Options::default()).unwrap();
+        assert_eq!(config.window.background_image.unwrap().path, expected);
     }
 }

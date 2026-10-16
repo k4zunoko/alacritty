@@ -1,5 +1,6 @@
 use std::fmt::{self, Formatter};
-use std::path::PathBuf;
+use std::mem;
+use std::path::{Path, PathBuf};
 
 use log::{error, warn};
 use serde::de::{self, MapAccess, Visitor};
@@ -11,8 +12,8 @@ use winit::window::{Fullscreen, Theme as WinitTheme, WindowLevel as WinitWindowL
 
 use alacritty_config_derive::{ConfigDeserialize, SerdeReplace};
 
-use crate::config::LOG_TARGET_CONFIG;
 use crate::config::ui_config::{Delta, Percentage};
+use crate::config::{LOG_TARGET_CONFIG, normalize_import};
 
 /// Default Alacritty name, used for window title and class.
 pub const DEFAULT_NAME: &str = "Alacritty";
@@ -343,6 +344,20 @@ pub struct BackgroundImage {
     pub mode: BackgroundImageMode,
 }
 
+impl BackgroundImage {
+    /// Resolve the image path relative to the configuration file at `config_path`.
+    ///
+    /// This follows the rules of `general.import`, so a leading `~/` is expanded to the home
+    /// directory and relative paths start at the directory of the configuration file instead of
+    /// Alacritty's working directory.
+    pub fn resolve_path(&mut self, config_path: &Path) {
+        // Keep an unset path empty, so it is still reported as missing.
+        if !self.path.as_os_str().is_empty() {
+            self.path = normalize_import(config_path, mem::take(&mut self.path));
+        }
+    }
+}
+
 /// Scaling mode for the window background image.
 #[derive(ConfigDeserialize, Serialize, Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackgroundImageMode {
@@ -365,6 +380,8 @@ pub enum BackgroundImageMode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::env;
 
     use crate::config::UiConfig;
 
@@ -421,5 +438,45 @@ mod tests {
                 .unwrap();
 
         assert_eq!(config.window.background_image.unwrap().opacity.as_f32(), 1.0);
+    }
+
+    #[test]
+    fn background_image_relative_path_is_resolved_from_config_dir() {
+        let config_dir = env::temp_dir().join("alacritty");
+        let mut image =
+            BackgroundImage { path: PathBuf::from("images/bg.png"), ..Default::default() };
+
+        image.resolve_path(&config_dir.join("alacritty.toml"));
+
+        assert_eq!(image.path, config_dir.join("images/bg.png"));
+    }
+
+    #[test]
+    fn background_image_absolute_path_is_kept() {
+        let path = env::temp_dir().join("bg.png");
+        let mut image = BackgroundImage { path: path.clone(), ..Default::default() };
+
+        image.resolve_path(&env::temp_dir().join("alacritty").join("alacritty.toml"));
+
+        assert_eq!(image.path, path);
+    }
+
+    #[test]
+    fn background_image_home_path_is_expanded() {
+        let Some(home_dir) = home::home_dir() else { return };
+        let mut image = BackgroundImage { path: PathBuf::from("~/bg.png"), ..Default::default() };
+
+        image.resolve_path(&env::temp_dir().join("alacritty").join("alacritty.toml"));
+
+        assert_eq!(image.path, home_dir.join("bg.png"));
+    }
+
+    #[test]
+    fn background_image_empty_path_is_kept() {
+        let mut image = BackgroundImage::default();
+
+        image.resolve_path(&env::temp_dir().join("alacritty").join("alacritty.toml"));
+
+        assert_eq!(image.path, PathBuf::new());
     }
 }
